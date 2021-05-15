@@ -47,10 +47,24 @@ func (l *CalcClient) StartCalcTerminal() (err error) {
 		str, err := l.parseCommand(os.Stdin)
 
 		if err != nil {
-			return err
+			log.Print("Error command:", fmt.Errorf("parseCommand():%w", err))
+			l.PrintHelp()
+			continue
 		}
-
 		if str == "BYE" {
+			log.Print("Exit...")
+			_, err = conn.Write([]byte(str))
+			if err != nil {
+				log.Print("Warning:", fmt.Errorf("conn.Write():%w", err))
+				return err
+			}
+			bufClose := make([]byte, 64)
+			_, err = conn.Read(bufClose)
+			if err != nil {
+				log.Print("Warning:", fmt.Errorf("conn.Read(%v):%w", buf, err))
+				return err
+			}
+			log.Print(string(bufClose))
 			return nil
 		}
 
@@ -83,7 +97,7 @@ func (l *CalcClient) parseCommand(src io.Reader) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("reader.ReadString():%w", err)
 	}
-	if text == "BYE" {
+	if text == "BYE\r\n" {
 		return "BYE", nil
 	}
 	cmd := strings.Split(text, ":")

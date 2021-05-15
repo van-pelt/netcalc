@@ -8,6 +8,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 type CalcServer struct {
@@ -28,7 +29,7 @@ func NewCalcServer(protocol, address string) *CalcServer {
 }
 
 func (c *CalcServer) StartServer() (err error) {
-
+	var mutex = &sync.Mutex{}
 	proto := protolite.NewCalcProtocol()
 	c.listener, err = net.Listen(c.protocol, c.addr)
 	log.Print("Start Listen [", c.protocol, ":", c.addr, "]...")
@@ -39,27 +40,29 @@ func (c *CalcServer) StartServer() (err error) {
 	c.conn = make(map[string]*net.Conn)
 	for {
 		newConn, err := c.listener.Accept()
-
 		if err != nil {
 			log.Print("Warning:", fmt.Errorf("Listen.Accept():%w", err))
 			continue
 		}
 
-		go c.handleCli(newConn, proto)
+		go c.handleCli(newConn, proto, mutex)
 	}
 	log.Print("Shutdown server")
 	return
 }
 
-func (c *CalcServer) handleCli(conn net.Conn, protocolMessage *protolite.CalcProtocol) {
+func (c *CalcServer) handleCli(conn net.Conn, protocolMessage *protolite.CalcProtocol, mutex *sync.Mutex) {
 
 	newId := uuid.New().String()
+	mutex.Lock()
 	c.conn[newId] = &conn
+	mutex.Unlock()
 	log.Print("New connection ID:", newId, ".Count connection:", len(c.conn))
-
 	defer func() {
 		conn.Close()
+		mutex.Lock()
 		delete(c.conn, newId)
+		mutex.Unlock()
 		log.Print("Close connection ID:", newId)
 	}()
 
@@ -78,6 +81,17 @@ func (c *CalcServer) handleCli(conn net.Conn, protocolMessage *protolite.CalcPro
 		}
 		cmd := string(buf[:readLen])
 		newPack := c.ParseCommand(cmd)
+
+		if newPack == "BYE" {
+			strResp := "Connection close (" + newId + ").OK"
+			_, err = conn.Write([]byte(strResp))
+			if err != nil {
+				log.Print("Warning:", fmt.Errorf("newPack:conn.Write():%w", err))
+				return
+			}
+			return
+		}
+
 		_, err = conn.Write([]byte(newPack))
 		if err != nil {
 			log.Print("Warning:", fmt.Errorf("newPack:conn.Write():%w", err))
@@ -94,6 +108,10 @@ func (c *CalcServer) ParseCommand(cmd string) string {
 		Body:       protolite.CmdBody{},
 		ErrorsData: protolite.ErrBody{},
 		Response:   protolite.CmdResponse{},
+	}
+
+	if cmd == "BYE" {
+		return cmd
 	}
 
 	line := strings.Split(cmd, ":")
